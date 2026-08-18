@@ -14,7 +14,7 @@ No build step, no dependencies, no server. Open the file in a browser and it jus
 
 ## Usage
 
-1. Download `facility-code-calculator.html`.
+1. Download `index.html` (optionally renaming it to something like `hid-calculator.html`.
 2. Open it in any modern web browser (desktop or mobile).
 3. Type into any one of the three fields — the others fill in automatically.
 4. The **How this is calculated** section at the bottom of the card shows the conversion visualized.
