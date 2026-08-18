@@ -1,0 +1,791 @@
+<!--
+  FACILITY CODE / CARD NUMBER CALCULATOR
+  =======================================
+  This is a single, self-contained HTML file. That means everything the page
+  needs — its structure, its styling (looks), and its logic (behavior) — all
+  lives in this one file. You can open it directly in any web browser, on a
+  computer or a phone, with no internet connection required.
+
+  An HTML file has (up to) three parts, and you'll find all three below:
+    1. HTML   - the structure/content of the page (the text you see, the
+                boxes things sit in). Lives in the <body> tag.
+    2. CSS    - the visual styling (colors, spacing, fonts). Lives inside
+                the <style> tag.
+    3. JavaScript (JS) - the logic that makes the page interactive (reacting
+                to typing, doing the math, updating the screen). Lives
+                inside the <script> tag near the bottom.
+
+  WHAT THIS PAGE ACTUALLY DOES (the concept, not the code):
+  Access badges commonly use a numbering scheme with two parts:
+    - a "facility code" (0-255) that identifies a site/building
+    - a "card number" (0-65535) that identifies one specific badge
+  These two numbers are combined into one bigger number, which is often
+  written in hexadecimal (base 16) on the badge or in software. This page
+  lets you type in any ONE of: facility code + card number, OR the
+  combined hex code — and it calculates the other values for you, live,
+  as you type.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+<title>Facility Code / Card Number Calculator</title>
+
+<style>
+  /* ======================================================================
+     CSS SECTION
+     This block defines how everything LOOKS: colors, sizes, spacing.
+     It does not contain any of the page's text or logic.
+
+     A CSS rule looks like this:
+        selector { property: value; }
+     The "selector" says WHICH element(s) the rule applies to (e.g. every
+     <h1>, or everything with class="card"). The property/value pairs
+     inside the { } say what to change about it (e.g. color, font-size).
+
+     A "class" is just a label we put on an HTML element (via class="...")
+     so CSS (and JavaScript) can target it. One element can have several
+     classes; many elements can share the same class.
+     ====================================================================== */
+
+  /* --- Color palette ---------------------------------------------------
+     ":root" is a special selector that means "the whole page". We define
+     our colors once here as "CSS variables" (the --name: value; lines),
+     then reuse them everywhere else as var(--name). This means if we ever
+     want to change the color scheme, we only have to edit it in one place. */
+  :root{
+    --bg: #0b0f10;          /* page background (near-black) */
+    --panel: #131a1c;       /* background for card-like boxes */
+    --panel-2: #182022;     /* slightly lighter panel, used for inputs */
+    --line: #263133;        /* subtle border color */
+    --text: #e7eeee;        /* main (light) text color */
+    --dim: #8ea3a6;         /* muted/secondary text color */
+    --teal: #3fd0c9;        /* accent color used for the hex field */
+    --amber: #e8a23d;       /* color representing the FACILITY CODE */
+    --periwinkle: #8aa0ff;  /* color representing the CARD NUMBER */
+    --bad: #e0616b;         /* red, used to flag invalid input */
+  }
+
+  /* Make width/height calculations include padding and border, which is
+     more intuitive and avoids sizing surprises. Applied to every element. */
+  *{ box-sizing: border-box; }
+
+  /* Base page styling: background color, text color, and the font stack
+     (the browser tries each font in order until it finds one installed). */
+  html,body{
+    margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent; /* removes gray flash on tap (iOS Safari) */
+  }
+
+  /* The ".wrap" div centers our content and caps its width, so it looks
+     good both on a narrow phone screen and a wide desktop browser. */
+  .wrap{
+    max-width: 480px;
+    margin: 0 auto;           /* 0 top/bottom margin, auto = center horizontally */
+    padding: 20px 16px 48px;  /* top/left-right/bottom spacing inside the box */
+    min-height: 100vh;        /* at least the full height of the browser window */
+  }
+
+  /* --- Header: the title area at the top of the page ------------------- */
+  header{
+    padding: 8px 4px 20px;
+  }
+  .eyebrow{
+    /* the small "Wiegand 26-bit" label above the title */
+    font-size: 11px;
+    letter-spacing: .14em;      /* extra space between letters, for a "label" feel */
+    text-transform: uppercase;
+    color: var(--teal);
+    font-weight: 600;
+  }
+  h1{
+    margin: 6px 0 4px;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .sub{
+    /* the one-line description under the title */
+    color: var(--dim);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* --- Generic "card" box -----------------------------------------------
+     We reuse this rounded, bordered box style for the input section —
+     the diagram lives inside that same card, so it doesn't need its own. */
+  .card{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    margin-top: 16px;
+  }
+
+  /* --- Input field styling ----------------------------------------------
+     Each input (facility code / card number / hex) has:
+       - a <label> above it (small uppercase text, e.g. "FACILITY CODE")
+       - the <input> box itself, where the user types
+       - a small hint line below it for validation messages
+  */
+  label{
+    display:flex;
+    align-items: baseline;
+    justify-content: space-between;  /* pushes the "range" text to the right */
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 6px;
+  }
+  label .range{
+    /* the small "0-255" style hint shown to the right of each label */
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 10.5px;
+    color: #5c6d70;
+  }
+  .field{ margin-bottom: 14px; }      /* spacing between each input group */
+  .field:last-child{ margin-bottom: 0; }  /* ...except the last one */
+
+  input[type=text], input[type=tel]{
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    color: var(--text);
+    font-size: 17px;
+    padding: 11px 12px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-weight: 600;
+  }
+  /* Color each input's TEXT to match the value it represents, so the
+     colors stay consistent with the diagram below (amber = facility code,
+     periwinkle = card number, teal = hex). This is purely cosmetic. */
+  #fc-in{ color: var(--amber); }
+  #cn-in{ color: var(--periwinkle); }
+  #hex-in{ color: var(--teal); }
+
+  input:focus{
+    /* Styling applied only while the user's cursor is inside the box */
+    outline: none;
+    border-color: var(--teal);
+    box-shadow: 0 0 0 3px rgba(63,208,201,0.15); /* soft glow ring */
+  }
+  input.invalid{
+    /* JavaScript adds/removes this class when a value is out of range;
+       this is what makes the box turn red when that happens. */
+    border-color: var(--bad);
+    box-shadow: 0 0 0 3px rgba(224,97,107,0.15);
+  }
+  .hint{
+    /* the small text under each input, used for validation error messages */
+    margin-top: 6px;
+    font-size: 11.5px;
+    color: var(--dim);
+    min-height: 15px; /* reserves space so the layout doesn't jump when a message appears */
+  }
+  .hint.err{ color: var(--bad); }  /* red text when showing an error */
+
+  /* --- Footer note at the very bottom ------------------------------------ */
+  footer{
+    margin-top: 22px;
+    color: var(--dim);
+    font-size: 11.5px;
+    line-height: 1.6;
+    text-align: center;
+    padding: 0 8px;
+  }
+  .license-link{
+    /* the small "CC BY-NC 4.0" button in the footer. It's a real <button>
+       element (see HTML below) but styled to look like plain underlined
+       text, so it blends in with the rest of the footer. */
+    background: none;
+    border: none;
+    padding: 0;
+    margin-top: 4px;
+    color: var(--dim);
+    font-size: 11.5px;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .license-link:hover{ color: var(--teal); }
+
+  /* ======================================================================
+     LICENSE POPUP
+     We use the native HTML <dialog> element (see the HTML section below).
+     A <dialog> is a built-in way to show a floating "pop-up" box centered
+     on the screen, with a dimmed backdrop behind it — the browser handles
+     the centering and the backdrop for us; we just style what's inside.
+     ====================================================================== */
+  dialog.license-modal{
+    /* This styles the popup box itself. */
+    max-width: 360px;
+    width: calc(100% - 48px);
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  dialog.license-modal::backdrop{
+    /* ::backdrop targets the dimmed overlay the browser draws behind an
+       open <dialog>, covering the rest of the page. */
+    background: rgba(4,7,8,0.7);
+  }
+  .license-modal h2{
+    margin: 0 0 10px;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  .license-modal p{
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--dim);
+  }
+  .license-modal a{
+    color: var(--teal);
+  }
+  .license-modal .modal-actions{
+    display: flex;
+    justify-content: flex-end;
+  }
+  .license-modal button.close-btn{
+    background: var(--teal);
+    color: #06201d;
+    border: none;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 9px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  /* ======================================================================
+     "HOW THIS IS CALCULATED" DIAGRAM
+     This lives at the bottom of the same card as the input fields, below
+     a thin divider line. It's just a <div> (see .diagram-body below) —
+     JavaScript rebuilds its contents every time an input changes.
+     ====================================================================== */
+  .diagram-body{
+    /* margin-top pulls it away from the last input field above; the
+       border-top + padding-top draw the thin divider line between the
+       inputs and the diagram. */
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+  }
+  .diagram-note{
+    /* small explanatory sentence at the bottom of the diagram */
+    font-size: 11px;
+    color: var(--dim);
+    text-align: center;
+    margin: 14px 0 0;
+    line-height: 1.5;
+  }
+
+  /* --- The colored bar showing "22 = 0x16" / "7956 = 0x1F14" ------------
+     This bar is built from two side-by-side boxes (a flex row). The
+     "flex:8" and "flex:16" inline styles (set in the JavaScript further
+     down) size them proportionally — 8 vs 16 — to visually represent that
+     the facility code is an 8-bit value and the card number a 16-bit
+     value out of the combined 24-bit whole. */
+  .bitbar{
+    display: flex;
+    gap: 2px;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 14px;
+  }
+  .bitseg{
+    padding: 9px 4px;
+    text-align: center;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .03em;
+    word-break: break-all; /* lets long text wrap inside the narrow box if needed */
+  }
+  .bitseg.fc{ background: var(--amber); color: #2b1a02; }       /* facility code segment */
+  .bitseg.cn{ background: var(--periwinkle); color: #0d1330; }  /* card number segment */
+  .bitseg.empty{ background: var(--panel-2); color: var(--dim); font-weight: 500; } /* shown when inputs are blank/invalid */
+
+  /* --- The labels + hex value shown underneath the colored bar ---------- */
+  .bitbar-labels{
+    display: flex;
+    gap: 2px;
+    margin-top: 5px;
+  }
+  .bitbar-label{
+    text-align: center;
+    font-size: 9.5px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .bitbar-value{
+    /* the plain hex digits (e.g. "16") shown below each label, slightly
+       larger and bolder so they stand out */
+    display: block;
+    margin-top: 3px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: .02em;
+    text-transform: none;
+    word-break: break-all;
+  }
+  .bitbar-value.fc{ color: var(--amber); }
+  .bitbar-value.cn{ color: var(--periwinkle); }
+  .bitbar-value.empty{ color: var(--dim); font-weight: 500; }
+
+  .combine-arrow{
+    /* the "combine into one 24-bit value" label between the bar and the
+       final hex bubble */
+    text-align: center;
+    color: var(--dim);
+    font-size: 10.5px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    margin: 14px 0;
+  }
+
+  /* --- The final combined hex "bubble" at the bottom of the diagram ----- */
+  .hexrow{
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+  .hexbubble{
+    /* one pill-shaped box containing both halves of the hex code, so it
+       reads as a single combined number even though it's two colors */
+    display: inline-flex;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 19px;
+    font-weight: 700;
+    padding: 7px 12px;
+    border-radius: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+  }
+  .hexbubble .hex-fc{ color: var(--amber); }  /* first 2 hex digits = facility code */
+  .hexbubble .hex-cn{ color: var(--periwinkle); }  /* last 4 hex digits = card number */
+  .hexbubble.empty{ color: var(--dim); }
+
+</style>
+</head>
+
+<body>
+<!-- ==========================================================================
+     HTML SECTION (the page CONTENT — everything the visitor actually reads
+     and clicks on). Each element below has a "class" or "id" attribute so
+     the CSS above (and the JavaScript below) knows how to find and style it.
+     ========================================================================== -->
+<div class="wrap">
+
+  <!-- Title area -->
+  <header>
+    <div class="eyebrow">Wiegand 26-bit</div>
+    <h1>Facility Code / Card Number Calculator</h1>
+    <div class="sub">Edit any field — facility code, card number, or hex — and the others update automatically.</div>
+  </header>
+
+  <!-- The three input fields, plus the "how this is calculated" diagram
+       underneath, all inside one shared card. Notice each <input> has a
+       unique "id" (fc-in, cn-in, hex-in) — that's how the JavaScript
+       further down finds each one and reacts when you type into it. Each
+       also has a matching empty <div class="hint">, which JavaScript
+       fills in with an error message ("Must be 0-255", etc.) if the
+       value is invalid. The <div id="diagram-body"> below the fields
+       starts empty — JavaScript fills it with the live diagram every
+       time one of the three inputs changes. -->
+  <div class="card">
+    <div class="field">
+      <label for="fc-in">Facility code <span class="range">0–255</span></label>
+      <input type="tel" inputmode="numeric" id="fc-in" placeholder="22" maxlength="3">
+      <div class="hint" id="fc-in-hint"></div>
+    </div>
+    <div class="field">
+      <label for="cn-in">Card number <span class="range">0–65535</span></label>
+      <input type="tel" inputmode="numeric" id="cn-in" placeholder="7956" maxlength="5">
+      <div class="hint" id="cn-in-hint"></div>
+    </div>
+    <div class="field">
+      <label for="hex-in">Hex card number <span class="range">6 digits</span></label>
+      <input type="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" id="hex-in" placeholder="161F14" maxlength="6">
+      <div class="hint" id="hex-in-hint"></div>
+    </div>
+
+    <div class="diagram-body" id="diagram-body">
+      <!-- filled live by the script below -->
+    </div>
+  </div>
+
+  <footer>
+    Everything runs locally in this page — nothing is sent anywhere.
+    <br>
+    <!-- type="button" stops this from accidentally submitting a form (there
+         isn't one here, but it's good practice). Clicking it runs the
+         JavaScript further down that opens the <dialog> below. -->
+    <button type="button" class="license-link" id="license-open">CC BY-NC 4.0</button>
+  </footer>
+
+</div>
+
+<!-- The license pop-up itself. A <dialog> starts hidden by default; it's
+     only shown when JavaScript calls its .showModal() method (see the
+     script below). Being outside the "wrap" div doesn't matter for a
+     <dialog> — the browser always centers it over the whole page.
+     Closing it — via the Close button, the Esc key, or tapping outside
+     it — is handled by the JavaScript further down; only the Esc key is
+     handled automatically by the browser on its own. -->
+<dialog class="license-modal" id="license-modal">
+  <h2>License</h2>
+  <p>
+    This calculator is licensed under a
+    <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)</a>
+    license. You're free to share and adapt it for non-commercial purposes,
+    with attribution.
+  </p>
+  <div class="modal-actions">
+    <button type="button" class="close-btn" id="license-close">Close</button>
+  </div>
+</dialog>
+
+<!-- ==========================================================================
+     JAVASCRIPT SECTION (the page's LOGIC/BEHAVIOR).
+     This is what actually does the math and updates the screen when you
+     type. Read the comments below top-to-bottom; they walk through what
+     each part does in plain language.
+     ========================================================================== -->
+<script>
+// Wrapping everything in "(function(){ ... })();" is a common JavaScript
+// pattern that keeps all our variable names private to this script, so
+// they can't accidentally clash with anything else on the page.
+(function(){
+
+  // ------------------------------------------------------------------
+  // THE CORE MATH (this is the one idea the whole page is built around)
+  // ------------------------------------------------------------------
+  // A facility code fits in 8 bits, meaning it can be any whole number
+  // from 0 to 255 (2^8 - 1 = 255).
+  // A card number fits in 16 bits, meaning it can be any whole number
+  // from 0 to 65535 (2^16 - 1 = 65535).
+  // To combine them into ONE number, we shift the facility code out of
+  // the way of the card number by multiplying it by 65536 (which is
+  // 2^16 — the total number of values the card number could take), then
+  // add the card number into the leftover space:
+  //
+  //      combined = facilityCode * 65536 + cardNumber
+  //
+  // That combined number, written in hexadecimal (base 16), is what
+  // appears as the "hex card number". Converting back the other way
+  // just reverses this: dividing by 65536 recovers the facility code,
+  // and the remainder of that division recovers the card number.
+  // ------------------------------------------------------------------
+
+  // The largest allowed value for each field, used to check user input.
+  var FC_MAX = 255;     // 2^8  - 1
+  var CN_MAX = 65535;   // 2^16 - 1
+
+  // --- Grab references to the HTML elements we'll need to read from or
+  //     write to. "document.getElementById('some-id')" finds the element
+  //     in the page whose id="some-id" attribute matches. We store each
+  //     one in a variable so we don't have to look it up again and again.
+  var fcIn = document.getElementById('fc-in');       // the facility code <input>
+  var cnIn = document.getElementById('cn-in');       // the card number <input>
+  var hexIn = document.getElementById('hex-in');     // the hex <input>
+  var fcHint = document.getElementById('fc-in-hint');   // its error-message <div>
+  var cnHint = document.getElementById('cn-in-hint');   // its error-message <div>
+  var hexHint = document.getElementById('hex-in-hint'); // its error-message <div>
+  var diagramBody = document.getElementById('diagram-body'); // the diagram container
+
+  // --- Small helper functions -----------------------------------------
+
+  // Converts a plain number into a 6-digit uppercase hex string.
+  // Example: toHex6(1450004) -> "161F14"
+  // ".toString(16)" converts the number to base 16 (hex).
+  // ".padStart(6, '0')" adds leading zeros until it's 6 characters long,
+  // since we always want a fixed-width 24-bit (6 hex digit) code.
+  function toHex6(n){
+    return n.toString(16).padStart(6, '0').toUpperCase();
+  }
+
+  // Clears any error message from one of the little hint text elements.
+  function clearHint(el){
+    el.textContent = '';
+    el.className = 'hint'; // resets it to the plain (non-error) style
+  }
+
+  // Shows an error message in one of the little hint text elements,
+  // and switches it to the red "error" style.
+  function errHint(el, msg){
+    el.textContent = msg;
+    el.className = 'hint err';
+  }
+
+  // --- Building the "How this is calculated" diagram --------------------
+  // This function rebuilds the diagram's inner HTML every time something
+  // changes. "valid" tells it whether we currently have a usable set of
+  // numbers; if not, it shows a grayed-out placeholder instead.
+  //
+  // Note: this function builds raw HTML as text (using string
+  // concatenation with the + operator) and then hands it to the browser
+  // via ".innerHTML = ...". That's a quick way to generate a chunk of
+  // markup from JavaScript, though it does mean the HTML tags below are
+  // written out as text strings rather than as separate <div> elements
+  // in the file itself.
+  function renderDiagram(valid, fc, cn, full){
+
+    if(!valid){
+      // No valid numbers to show yet (fields are empty or out of range) —
+      // render everything as dashes in a muted gray color.
+      diagramBody.innerHTML =
+        '<div class="bitbar">' +
+          '<div class="bitseg empty" style="flex:8">-- = 0x--</div>' +
+          '<div class="bitseg empty" style="flex:16">----- = 0x----</div>' +
+        '</div>' +
+        '<div class="bitbar-labels">' +
+          '<div class="bitbar-label" style="flex:8">Facility code · 8 bits<span class="bitbar-value empty">--</span></div>' +
+          '<div class="bitbar-label" style="flex:16">Card number · 16 bits<span class="bitbar-value empty">----</span></div>' +
+        '</div>' +
+        '<div class="combine-arrow">combine into one 24-bit value</div>' +
+        '<div class="hexrow"><span class="hexbubble empty">------</span></div>' +
+        '<p class="diagram-note">Enter a valid value above to see the calculation</p>';
+      return; // stop here — nothing more to do
+    }
+
+    // We DO have valid numbers, so compute the combined hex code and
+    // build the full-color version of the diagram.
+    var hex = toHex6(full);
+    // hex.slice(0, 2) takes the first 2 characters (the facility code's
+    // portion of the hex code); hex.slice(2) takes everything from
+    // position 2 onward (the card number's portion).
+
+    diagramBody.innerHTML =
+      // Row 1: the colored bar, each half showing "decimal = 0xhex"
+      '<div class="bitbar">' +
+        '<div class="bitseg fc" style="flex:8">' + fc + ' = 0x' + hex.slice(0, 2) + '</div>' +
+        '<div class="bitseg cn" style="flex:16">' + cn + ' = 0x' + hex.slice(2) + '</div>' +
+      '</div>' +
+      // Row 2: labels + the plain hex digits underneath each half
+      '<div class="bitbar-labels">' +
+        '<div class="bitbar-label" style="flex:8">Facility code · 8 bits<span class="bitbar-value fc">' + hex.slice(0, 2) + '</span></div>' +
+        '<div class="bitbar-label" style="flex:16">Card number · 16 bits<span class="bitbar-value cn">' + hex.slice(2) + '</span></div>' +
+      '</div>' +
+      // Row 3: a small "combine into one value" label
+      '<div class="combine-arrow">combine into one 24-bit value</div>' +
+      // Row 4: the final combined hex code, both halves in one bubble
+      '<div class="hexrow"><span class="hexbubble">' +
+        '<span class="hex-fc">' + hex.slice(0, 2) + '</span>' +
+        '<span class="hex-cn">' + hex.slice(2) + '</span>' +
+      '</span></div>' +
+      '<p class="diagram-note">The facility code and card number each convert to hex, then sit side by side as one combined hex code.</p>';
+  }
+
+  // ------------------------------------------------------------------
+  // WHAT HAPPENS WHEN YOU TYPE IN THE FACILITY CODE OR CARD NUMBER BOXES
+  // ------------------------------------------------------------------
+  // This function runs every time either the facility code or card
+  // number input changes. Its job: validate what was typed, then (if
+  // valid) calculate and fill in the hex field and update the diagram.
+  function fromFacilityCard(){
+
+    // Start every run by clearing old error messages/red borders, so
+    // stale errors don't linger from a previous keystroke.
+    clearHint(fcHint); clearHint(cnHint); clearHint(hexHint);
+    fcIn.classList.remove('invalid');
+    cnIn.classList.remove('invalid');
+    hexIn.classList.remove('invalid');
+
+    // Read the current text out of each box. ".trim()" removes any
+    // accidental leading/trailing spaces.
+    var fcRaw = fcIn.value.trim();
+    var cnRaw = cnIn.value.trim();
+
+    // If BOTH boxes are empty, there's nothing to calculate — clear the
+    // hex field, show the grayed-out diagram, and stop.
+    if(fcRaw === '' && cnRaw === ''){
+      hexIn.value = '';
+      renderDiagram(false);
+      return;
+    }
+
+    // Convert the typed text into actual numbers. parseInt(text, 10)
+    // reads the text as a base-10 (ordinary decimal) whole number.
+    // If the text isn't a valid number, parseInt returns "NaN"
+    // (Not-a-Number), which we check for below.
+    var fc = parseInt(fcRaw, 10);
+    var cn = parseInt(cnRaw, 10);
+    var ok = true; // will flip to false if either value fails validation
+
+    // Validate the facility code: it must be a real number between
+    // 0 and 255 inclusive.
+    if(fcRaw === '' || isNaN(fc) || fc < 0 || fc > FC_MAX){
+      if(fcRaw !== ''){
+        // Only show a red error if the user actually typed SOMETHING
+        // invalid (as opposed to just leaving the box empty).
+        fcIn.classList.add('invalid');
+        errHint(fcHint, 'Must be 0–' + FC_MAX);
+      }
+      ok = false;
+    }
+
+    // Same validation for the card number, but against its own range.
+    if(cnRaw === '' || isNaN(cn) || cn < 0 || cn > CN_MAX){
+      if(cnRaw !== ''){
+        cnIn.classList.add('invalid');
+        errHint(cnHint, 'Must be 0–' + CN_MAX);
+      }
+      ok = false;
+    }
+
+    // If either value failed validation, don't attempt the math —
+    // clear the hex field and show the grayed-out diagram instead.
+    if(!ok){
+      hexIn.value = '';
+      renderDiagram(false);
+      return;
+    }
+
+    // Both values are valid! Apply the core formula described at the
+    // top of this script, then display the results.
+    var full = fc * 65536 + cn;   // combine into one number
+    hexIn.value = toHex6(full);   // show it in the hex field, as hex text
+    renderDiagram(true, fc, cn, full); // update the live diagram
+  }
+
+  // ------------------------------------------------------------------
+  // WHAT HAPPENS WHEN YOU TYPE IN THE HEX BOX (the reverse direction)
+  // ------------------------------------------------------------------
+  // This function runs every time the hex input changes. It does the
+  // same job as fromFacilityCard() above, but starting from a hex code
+  // and working BACKWARD to recover the facility code and card number.
+  function fromHex(){
+
+    clearHint(fcHint); clearHint(cnHint); clearHint(hexHint);
+    fcIn.classList.remove('invalid');
+    cnIn.classList.remove('invalid');
+    hexIn.classList.remove('invalid');
+
+    // Read the typed hex text, and strip an optional "0x" prefix in
+    // case someone types it that way (e.g. "0x161F14").
+    var raw = hexIn.value.trim().replace(/^0x/i, '');
+
+    // If the box is empty, clear everything else and show the
+    // grayed-out diagram.
+    if(raw === ''){
+      fcIn.value = '';
+      cnIn.value = '';
+      renderDiagram(false);
+      return;
+    }
+
+    // Check that what was typed is ONLY valid hex characters (0-9 and
+    // A-F, upper or lower case), 1 to 6 digits long. This is a "regular
+    // expression" (a pattern-matching tool) — .test(raw) returns true
+    // only if the whole string matches that pattern.
+    if(!/^[0-9a-fA-F]{1,6}$/.test(raw)){
+      hexIn.classList.add('invalid');
+      errHint(hexHint, 'Hex digits only (0-9, A-F), max 6');
+      fcIn.value = '';
+      cnIn.value = '';
+      renderDiagram(false);
+      return;
+    }
+
+    // The hex text is valid — convert it to an ordinary number, then
+    // reverse the combining formula:
+    //   - dividing by 65536 (and rounding down) recovers the facility code
+    //   - the remainder left over (%) is the card number
+    var full = parseInt(raw, 16);      // read the text as base-16 (hex)
+    var fc = Math.floor(full / 65536); // integer division -> facility code
+    var cn = full % 65536;             // remainder -> card number
+
+    // Write the results into the other two boxes and refresh the diagram.
+    fcIn.value = fc;
+    cnIn.value = cn;
+    renderDiagram(true, fc, cn, full);
+  }
+
+  // ------------------------------------------------------------------
+  // WIRING IT ALL UP: telling the browser which function to run when
+  // ------------------------------------------------------------------
+  // ".addEventListener('input', someFunction)" tells the browser:
+  // "every time the user types/changes this field, call someFunction."
+  // This is what makes the whole page feel 'live' — nothing here waits
+  // for a button click.
+  fcIn.addEventListener('input', fromFacilityCard);
+  cnIn.addEventListener('input', fromFacilityCard);
+  hexIn.addEventListener('input', function(){
+    // For the hex box specifically, we also force whatever was typed
+    // to UPPERCASE first (so "16f2a1" becomes "16F2A1"), purely for
+    // consistent display, and then run the usual fromHex() logic.
+    hexIn.value = hexIn.value.toUpperCase();
+    fromHex();
+  });
+
+  // ------------------------------------------------------------------
+  // LICENSE POP-UP: clicking the "CC BY-NC 4.0" link in the footer
+  // opens the <dialog> defined near the bottom of the HTML. The Esc key
+  // closes it automatically (built into the browser), but closing it
+  // via the "Close" button or by tapping outside it needs a little
+  // JavaScript of our own, which is what the next few lines do.
+  // ------------------------------------------------------------------
+  var licenseOpenBtn = document.getElementById('license-open');
+  var licenseCloseBtn = document.getElementById('license-close');
+  var licenseModal = document.getElementById('license-modal');
+
+  licenseOpenBtn.addEventListener('click', function(){
+    licenseModal.showModal(); // built-in method: shows the dialog + dims the page behind it
+  });
+
+  licenseCloseBtn.addEventListener('click', function(){
+    licenseModal.close(); // built-in method: hides the dialog again
+  });
+
+  // Tapping OUTSIDE the dialog's box (i.e. on the dimmed backdrop) also
+  // fires a click event, but with the <dialog> element itself as the
+  // target — because there's nothing else there to click on. Clicking
+  // something INSIDE the dialog (the heading, the text, the button)
+  // means the target is that inner element instead, not the dialog
+  // itself. Just checking "was the target the dialog" isn't quite
+  // precise enough on its own though — the dialog's box includes its
+  // padding, so a tap just inside the visible edge would also count as
+  // a hit on the dialog. To be exact, we additionally compare the click
+  // coordinates against the dialog's actual on-screen position/size
+  // (from getBoundingClientRect) and only close it if the click landed
+  // truly outside that box.
+  licenseModal.addEventListener('click', function(e){
+    if(e.target !== licenseModal) return; // click landed on inner content — ignore
+
+    var box = licenseModal.getBoundingClientRect();
+    var clickedInsideBox =
+      e.clientX >= box.left && e.clientX <= box.right &&
+      e.clientY >= box.top && e.clientY <= box.bottom;
+
+    if(!clickedInsideBox){
+      licenseModal.close();
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // INITIAL STATE: pre-fill the fields with an example when the page
+  // first loads, so it isn't blank, and run the calculation once to
+  // populate the hex field and diagram immediately.
+  // ------------------------------------------------------------------
+  fcIn.value = 22;
+  cnIn.value = 7956;
+  fromFacilityCard();
+
+})(); // end of the wrapper function — runs immediately when the page loads
+</script>
+
+</body>
+</html>
