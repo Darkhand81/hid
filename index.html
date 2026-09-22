@@ -21,9 +21,10 @@
     - a "card number" (0-65535) that identifies one specific badge
   These two numbers are combined into one bigger number, which is often
   written in hexadecimal (base 16) on the badge or in software. This page
-  lets you type in any ONE of: facility code + card number, OR the
-  combined hex code — and it calculates the other values for you, live,
-  as you type.
+  lets you type in any ONE of: facility code + card number, the combined
+  hex code, OR the raw 26-bit Wiegand value a reader or panel log shows
+  (the same number with two parity bits added) — and it calculates the
+  other values for you, live, as you type.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -126,7 +127,7 @@
   }
 
   /* --- Input field styling ----------------------------------------------
-     Each input (facility code / card number / hex) has:
+     Each input (facility code / card number / hex / raw Wiegand) has:
        - a <label> above it (small uppercase text, e.g. "FACILITY CODE")
        - the <input> box itself, where the user types
        - a small hint line below it for validation messages
@@ -168,6 +169,7 @@
   #fc-in{ color: var(--amber); }
   #cn-in{ color: var(--periwinkle); }
   #hex-in{ color: var(--teal); }
+  #raw-in{ color: var(--text); }
 
   input:focus{
     /* Styling applied only while the user's cursor is inside the box */
@@ -379,6 +381,11 @@
   .hexbubble .hex-cn{ color: var(--periwinkle); }  /* last 4 hex digits = card number */
   .hexbubble.empty{ color: var(--dim); }
 
+  /* The raw Wiegand value (with parity bits) doesn't split neatly into a
+     facility code half and a card number half. The parity bits shift
+     everything over by one bit, so it's shown in a single color. */
+  .hexbubble.raw{ color: var(--text); }
+
 </style>
 </head>
 
@@ -394,18 +401,18 @@
   <header>
     <div class="eyebrow">Wiegand 26-bit</div>
     <h1>Facility Code / Card Number Calculator</h1>
-    <div class="sub">Edit any field — facility code, card number, or hex — and the others update automatically.</div>
+    <div class="sub">Edit any field and the others update automatically.</div>
   </header>
 
-  <!-- The three input fields, plus the "how this is calculated" diagram
+  <!-- The four input fields, plus the "how this is calculated" diagram
        underneath, all inside one shared card. Notice each <input> has a
-       unique "id" (fc-in, cn-in, hex-in) — that's how the JavaScript
+       unique "id" (fc-in, cn-in, hex-in, raw-in) — that's how the JavaScript
        further down finds each one and reacts when you type into it. Each
        also has a matching empty <div class="hint">, which JavaScript
        fills in with an error message ("Must be 0-255", etc.) if the
        value is invalid. The <div id="diagram-body"> below the fields
        starts empty — JavaScript fills it with the live diagram every
-       time one of the three inputs changes. -->
+       time one of the inputs changes. -->
   <div class="card">
     <div class="field">
       <label for="fc-in">Facility code <span class="range">0–255</span></label>
@@ -421,6 +428,14 @@
       <label for="hex-in">Hex card number <span class="range">6 digits</span></label>
       <input type="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" id="hex-in" placeholder="161F14" maxlength="6">
       <div class="hint" id="hex-in-hint"></div>
+    </div>
+    <!-- The raw 26-bit Wiegand value, the way many readers and panel logs
+         show it: the same 24 data bits with a parity bit added at each
+         end, written as 8 hex digits (e.g. 002C3E29). -->
+    <div class="field">
+      <label for="raw-in">Raw Wiegand (with parity) <span class="range">8 digits</span></label>
+      <input type="text" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false" id="raw-in" placeholder="002C3E29" maxlength="8">
+      <div class="hint" id="raw-in-hint"></div>
     </div>
 
     <div class="diagram-body" id="diagram-body">
@@ -491,9 +506,26 @@
   // and the remainder of that division recovers the card number.
   // ------------------------------------------------------------------
 
+  // ------------------------------------------------------------------
+  // RAW WIEGAND FORMAT (the 4th field)
+  // ------------------------------------------------------------------
+  // When a reader actually sends a card over the Wiegand wire, it sends
+  // 26 bits: the 24 data bits above, plus one "parity" bit at each end.
+  // Parity bits are a simple error check so the panel can spot a bad read:
+  //   - The FIRST bit is "even parity" over the first 12 data bits:
+  //     it is set to 1 if needed so that the count of 1s is even.
+  //   - The LAST bit is "odd parity" over the last 12 data bits:
+  //     it is set to 1 if needed so that the count of 1s is odd.
+  // Many readers and panel logs print those 26 bits as 8 hex digits,
+  // e.g. facility 22, card 8618 shows up as 002C4354. Because the leading
+  // parity bit shifts everything over by one bit, those digits don't
+  // line up with the plain hex code — you have to do the math.
+  // ------------------------------------------------------------------
+
   // The largest allowed value for each field, used to check user input.
-  var FC_MAX = 255;     // 2^8  - 1
-  var CN_MAX = 65535;   // 2^16 - 1
+  var FC_MAX = 255;         // 2^8  - 1
+  var CN_MAX = 65535;       // 2^16 - 1
+  var RAW_MAX = 0x3FFFFFF;  // 2^26 - 1 (26 bits: 24 data bits + 2 parity bits)
 
   // --- Grab references to the HTML elements we'll need to read from or
   //     write to. "document.getElementById('some-id')" finds the element
@@ -502,20 +534,43 @@
   var fcIn = document.getElementById('fc-in');       // the facility code <input>
   var cnIn = document.getElementById('cn-in');       // the card number <input>
   var hexIn = document.getElementById('hex-in');     // the hex <input>
-  var fcHint = document.getElementById('fc-in-hint');   // its error-message <div>
-  var cnHint = document.getElementById('cn-in-hint');   // its error-message <div>
-  var hexHint = document.getElementById('hex-in-hint'); // its error-message <div>
+  var rawIn = document.getElementById('raw-in');     // the raw Wiegand <input>
+  var fcHint = document.getElementById('fc-in-hint');   // error-message <div>s,
+  var cnHint = document.getElementById('cn-in-hint');   // one under each input
+  var hexHint = document.getElementById('hex-in-hint');
+  var rawHint = document.getElementById('raw-in-hint');
   var diagramBody = document.getElementById('diagram-body'); // the diagram container
 
   // --- Small helper functions -----------------------------------------
 
-  // Converts a plain number into a 6-digit uppercase hex string.
-  // Example: toHex6(1450004) -> "161F14"
+  // Converts a number into an uppercase hex string, padded with leading
+  // zeros to a fixed number of digits.
+  // Example: toHex(1450004, 6) -> "161F14"
   // ".toString(16)" converts the number to base 16 (hex).
-  // ".padStart(6, '0')" adds leading zeros until it's 6 characters long,
-  // since we always want a fixed-width 24-bit (6 hex digit) code.
-  function toHex6(n){
-    return n.toString(16).padStart(6, '0').toUpperCase();
+  // ".padStart(digits, '0')" adds leading zeros until it's long enough.
+  function toHex(n, digits){
+    return n.toString(16).padStart(digits, '0').toUpperCase();
+  }
+
+  // Counts how many 1 bits are in a number's binary form.
+  // Example: 22 is 10110 in binary, so countOnes(22) -> 3
+  function countOnes(n){
+    return n.toString(2).split('1').length - 1;
+  }
+
+  // Builds the raw 26-bit Wiegand value from the 24-bit combined number
+  // by adding the two parity bits described above.
+  //   full >> 12     = the first 12 data bits
+  //   full & 0xFFF   = the last 12 data bits
+  //   % 2            = the remainder after dividing by 2 (0 = even, 1 = odd)
+  // The result is: evenBit, then the 24 data bits, then oddBit.
+  // Multiplying by 2 shifts the data bits over by one to make room for
+  // the odd bit at the end, and 33554432 is 2^25, the position of the
+  // leading even bit.
+  function toRawWiegand(full){
+    var evenBit = countOnes(Math.floor(full / 4096)) % 2;
+    var oddBit = 1 - (countOnes(full % 4096) % 2);
+    return evenBit * 33554432 + full * 2 + oddBit;
   }
 
   // Clears any error message from one of the little hint text elements.
@@ -529,6 +584,41 @@
   function errHint(el, msg){
     el.textContent = msg;
     el.className = 'hint err';
+  }
+
+  // Clears every error message and red border at once. Each update below
+  // starts with this, so errors from an earlier keystroke don't linger.
+  function resetErrors(){
+    [fcHint, cnHint, hexHint, rawHint].forEach(clearHint);
+    [fcIn, cnIn, hexIn, rawIn].forEach(function(input){
+      input.classList.remove('invalid');
+    });
+  }
+
+  // Marks one input as invalid and shows a message under it.
+  function flag(input, hint, msg){
+    input.classList.add('invalid');
+    errHint(hint, msg);
+  }
+
+  // Fills in every field EXCEPT the one the user is typing in (so we
+  // never overwrite what they're typing), then refreshes the diagram.
+  function showResult(fc, cn, source){
+    var full = fc * 65536 + cn;
+    if(source !== fcIn)  fcIn.value = fc;
+    if(source !== cnIn)  cnIn.value = cn;
+    if(source !== hexIn) hexIn.value = toHex(full, 6);
+    if(source !== rawIn) rawIn.value = toHex(toRawWiegand(full), 8);
+    renderDiagram(true, fc, cn, full);
+  }
+
+  // Empties every field except the one the user is typing in, and shows
+  // the grayed-out diagram. Used when there's nothing valid to show.
+  function clearOthers(source){
+    [fcIn, cnIn, hexIn, rawIn].forEach(function(input){
+      if(input !== source) input.value = '';
+    });
+    renderDiagram(false);
   }
 
   // --- Building the "How this is calculated" diagram --------------------
@@ -558,16 +648,23 @@
         '</div>' +
         '<div class="combine-arrow">combine into one 24-bit value</div>' +
         '<div class="hexrow"><span class="hexbubble empty">------</span></div>' +
+        '<div class="combine-arrow">add a parity bit to each end</div>' +
+        '<div class="hexrow"><span class="hexbubble empty">--------</span></div>' +
         '<p class="diagram-note">Enter a valid value above to see the calculation</p>';
       return; // stop here — nothing more to do
     }
 
     // We DO have valid numbers, so compute the combined hex code and
     // build the full-color version of the diagram.
-    var hex = toHex6(full);
+    var hex = toHex(full, 6);
+    var raw = toRawWiegand(full);
     // hex.slice(0, 2) takes the first 2 characters (the facility code's
     // portion of the hex code); hex.slice(2) takes everything from
     // position 2 onward (the card number's portion).
+    // raw >= 33554432 checks whether the leading (even) parity bit is 1;
+    // raw % 2 gives the trailing (odd) parity bit.
+    var evenBit = raw >= 33554432 ? 1 : 0;
+    var oddBit = raw % 2;
 
     diagramBody.innerHTML =
       // Row 1: the colored bar, each half showing "decimal = 0xhex"
@@ -587,7 +684,11 @@
         '<span class="hex-fc">' + hex.slice(0, 2) + '</span>' +
         '<span class="hex-cn">' + hex.slice(2) + '</span>' +
       '</span></div>' +
-      '<p class="diagram-note">The facility code and card number each convert to hex, then sit side by side as one combined hex code.</p>';
+      // Rows 5-6: the same value with parity bits added, as raw Wiegand
+      '<div class="combine-arrow">add a parity bit to each end</div>' +
+      '<div class="hexrow"><span class="hexbubble raw">' + toHex(raw, 8) + '</span></div>' +
+      '<p class="diagram-note">Leading even-parity bit is ' + evenBit + ', trailing odd-parity bit is ' + oddBit +
+        '. The extra bit at the front shifts every digit, so the raw value doesn\'t visibly contain the hex code above.</p>';
   }
 
   // ------------------------------------------------------------------
@@ -595,28 +696,14 @@
   // ------------------------------------------------------------------
   // This function runs every time either the facility code or card
   // number input changes. Its job: validate what was typed, then (if
-  // valid) calculate and fill in the hex field and update the diagram.
+  // valid) calculate and fill in the other fields and update the diagram.
   function fromFacilityCard(){
-
-    // Start every run by clearing old error messages/red borders, so
-    // stale errors don't linger from a previous keystroke.
-    clearHint(fcHint); clearHint(cnHint); clearHint(hexHint);
-    fcIn.classList.remove('invalid');
-    cnIn.classList.remove('invalid');
-    hexIn.classList.remove('invalid');
+    resetErrors();
 
     // Read the current text out of each box. ".trim()" removes any
     // accidental leading/trailing spaces.
     var fcRaw = fcIn.value.trim();
     var cnRaw = cnIn.value.trim();
-
-    // If BOTH boxes are empty, there's nothing to calculate — clear the
-    // hex field, show the grayed-out diagram, and stop.
-    if(fcRaw === '' && cnRaw === ''){
-      hexIn.value = '';
-      renderDiagram(false);
-      return;
-    }
 
     // Convert the typed text into actual numbers. parseInt(text, 10)
     // reads the text as a base-10 (ordinary decimal) whole number.
@@ -627,77 +714,58 @@
     var ok = true; // will flip to false if either value fails validation
 
     // Validate the facility code: it must be a real number between
-    // 0 and 255 inclusive.
+    // 0 and 255 inclusive. Only show a red error if the user actually
+    // typed SOMETHING invalid (not if the box is just empty).
     if(fcRaw === '' || isNaN(fc) || fc < 0 || fc > FC_MAX){
-      if(fcRaw !== ''){
-        // Only show a red error if the user actually typed SOMETHING
-        // invalid (as opposed to just leaving the box empty).
-        fcIn.classList.add('invalid');
-        errHint(fcHint, 'Must be 0–' + FC_MAX);
-      }
+      if(fcRaw !== '') flag(fcIn, fcHint, 'Must be 0–' + FC_MAX);
       ok = false;
     }
 
     // Same validation for the card number, but against its own range.
     if(cnRaw === '' || isNaN(cn) || cn < 0 || cn > CN_MAX){
-      if(cnRaw !== ''){
-        cnIn.classList.add('invalid');
-        errHint(cnHint, 'Must be 0–' + CN_MAX);
-      }
+      if(cnRaw !== '') flag(cnIn, cnHint, 'Must be 0–' + CN_MAX);
       ok = false;
     }
 
     // If either value failed validation, don't attempt the math —
-    // clear the hex field and show the grayed-out diagram instead.
+    // clear the calculated fields and show the grayed-out diagram.
     if(!ok){
       hexIn.value = '';
+      rawIn.value = '';
       renderDiagram(false);
       return;
     }
 
-    // Both values are valid! Apply the core formula described at the
-    // top of this script, then display the results.
-    var full = fc * 65536 + cn;   // combine into one number
-    hexIn.value = toHex6(full);   // show it in the hex field, as hex text
-    renderDiagram(true, fc, cn, full); // update the live diagram
+    // Both values are valid! Fill in the other fields.
+    // (Passing fcIn as the source leaves both typed-in boxes untouched,
+    // because showResult only rewrites fcIn/cnIn with the same values.)
+    showResult(fc, cn, fcIn);
   }
 
   // ------------------------------------------------------------------
   // WHAT HAPPENS WHEN YOU TYPE IN THE HEX BOX (the reverse direction)
   // ------------------------------------------------------------------
-  // This function runs every time the hex input changes. It does the
-  // same job as fromFacilityCard() above, but starting from a hex code
-  // and working BACKWARD to recover the facility code and card number.
+  // Starts from a 6-digit hex code and works BACKWARD to recover the
+  // facility code and card number.
   function fromHex(){
-
-    clearHint(fcHint); clearHint(cnHint); clearHint(hexHint);
-    fcIn.classList.remove('invalid');
-    cnIn.classList.remove('invalid');
-    hexIn.classList.remove('invalid');
+    resetErrors();
 
     // Read the typed hex text, and strip an optional "0x" prefix in
     // case someone types it that way (e.g. "0x161F14").
-    var raw = hexIn.value.trim().replace(/^0x/i, '');
+    var text = hexIn.value.trim().replace(/^0x/i, '');
 
-    // If the box is empty, clear everything else and show the
-    // grayed-out diagram.
-    if(raw === ''){
-      fcIn.value = '';
-      cnIn.value = '';
-      renderDiagram(false);
+    if(text === ''){
+      clearOthers(hexIn);
       return;
     }
 
     // Check that what was typed is ONLY valid hex characters (0-9 and
     // A-F, upper or lower case), 1 to 6 digits long. This is a "regular
-    // expression" (a pattern-matching tool) — .test(raw) returns true
+    // expression" (a pattern-matching tool) — .test(text) returns true
     // only if the whole string matches that pattern.
-    if(!/^[0-9a-fA-F]{1,6}$/.test(raw)){
-      hexIn.classList.add('invalid');
-      errHint(hexHint, 'Hex digits only (0-9, A-F), max 6');
-      fcIn.value = '';
-      cnIn.value = '';
-      renderDiagram(false);
+    if(!/^[0-9a-fA-F]{1,6}$/.test(text)){
+      flag(hexIn, hexHint, 'Hex digits only (0-9, A-F), max 6');
+      clearOthers(hexIn);
       return;
     }
 
@@ -705,14 +773,53 @@
     // reverse the combining formula:
     //   - dividing by 65536 (and rounding down) recovers the facility code
     //   - the remainder left over (%) is the card number
-    var full = parseInt(raw, 16);      // read the text as base-16 (hex)
-    var fc = Math.floor(full / 65536); // integer division -> facility code
-    var cn = full % 65536;             // remainder -> card number
+    var full = parseInt(text, 16);    // read the text as base-16 (hex)
+    showResult(Math.floor(full / 65536), full % 65536, hexIn);
+  }
 
-    // Write the results into the other two boxes and refresh the diagram.
-    fcIn.value = fc;
-    cnIn.value = cn;
-    renderDiagram(true, fc, cn, full);
+  // ------------------------------------------------------------------
+  // WHAT HAPPENS WHEN YOU TYPE IN THE RAW WIEGAND BOX
+  // ------------------------------------------------------------------
+  // Starts from the 8-digit raw value a reader or log shows, strips off
+  // the two parity bits, and recovers the facility code and card number.
+  function fromRaw(){
+    resetErrors();
+
+    var text = rawIn.value.trim().replace(/^0x/i, '');
+
+    if(text === ''){
+      clearOthers(rawIn);
+      return;
+    }
+
+    if(!/^[0-9a-fA-F]{1,8}$/.test(text)){
+      flag(rawIn, rawHint, 'Hex digits only (0-9, A-F), max 8');
+      clearOthers(rawIn);
+      return;
+    }
+
+    var raw = parseInt(text, 16);
+
+    // A 26-bit value can't be bigger than 03FFFFFF. Anything larger
+    // isn't a standard 26-bit read.
+    if(raw > RAW_MAX){
+      flag(rawIn, rawHint, 'Too large for 26-bit Wiegand (max 03FFFFFF)');
+      clearOthers(rawIn);
+      return;
+    }
+
+    // Drop the trailing parity bit (divide by 2, round down) and the
+    // leading parity bit (keep only the lower 24 bits with % 2^24).
+    // What's left is the same 24-bit combined number the hex field uses.
+    var full = Math.floor(raw / 2) % 16777216;
+    showResult(Math.floor(full / 65536), full % 65536, rawIn);
+
+    // Rebuild the parity bits from the data and compare. If they don't
+    // match what was typed, the value was probably misread or mistyped.
+    // We still show the decoded numbers, just with a warning.
+    if(toRawWiegand(full) !== raw){
+      flag(rawIn, rawHint, 'Parity check failed. Double-check this value.');
+    }
   }
 
   // ------------------------------------------------------------------
@@ -725,11 +832,15 @@
   fcIn.addEventListener('input', fromFacilityCard);
   cnIn.addEventListener('input', fromFacilityCard);
   hexIn.addEventListener('input', function(){
-    // For the hex box specifically, we also force whatever was typed
-    // to UPPERCASE first (so "16f2a1" becomes "16F2A1"), purely for
-    // consistent display, and then run the usual fromHex() logic.
+    // For the hex boxes, we also force whatever was typed to UPPERCASE
+    // first (so "16f2a1" becomes "16F2A1"), purely for consistent
+    // display, and then run the usual logic.
     hexIn.value = hexIn.value.toUpperCase();
     fromHex();
+  });
+  rawIn.addEventListener('input', function(){
+    rawIn.value = rawIn.value.toUpperCase();
+    fromRaw();
   });
 
   // ------------------------------------------------------------------
